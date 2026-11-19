@@ -44,7 +44,7 @@
 flowchart TB
   subgraph SRC["① 소스 — 이 레포"]
     direction LR
-    shared["<b>shared/</b><br/>부위 정의 · 상한값 · 입력 검증"]
+    shared["<b>shared/</b><br/>부위 정의 · 상한값<br/>입력 검증"]
     subgraph WEB["web/ — React 화면"]
       direction LR
       draw["✏️ 그리기<br/>부위별 캔버스"] -- "저장한 그림" --> slot["🎰 슬롯<br/>부위별 릴"]
