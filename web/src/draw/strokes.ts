@@ -104,7 +104,7 @@ export function renderDot(ctx: CanvasRenderingContext2D, s: Stroke, boxW: number
   ctx.restore();
 }
 
-/** 가로 폭 width 기준으로 좌우를 뒤집은 획 (양쪽 같이 → 따로 그리기로 넘길 때) */
+/** 가로 폭 width 기준으로 좌우를 뒤집은 획 (거울 모드 → 일반 모드로 넘길 때) */
 export function mirrorStroke(s: Stroke, width: number): Stroke {
   const points = s.points.map((v, i) => (i % 2 === 0 ? width - v : v));
   return { ...s, points };

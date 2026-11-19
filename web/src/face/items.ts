@@ -1,5 +1,4 @@
 // 부위별 그림 후보(릴 항목) 만들기와 참조(그림 id·예시) 풀기.
-import { REEL_WINDOW } from "@shared/limits";
 import { PARTS, type PartId } from "@shared/parts";
 import type { Drawing, PartRef } from "@shared/types";
 import { drawingUrl } from "../lib/api";
@@ -27,10 +26,10 @@ export function activeDrawings(drawings: Drawing[], part: PartId): Drawing[] {
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
-/** 슬롯 후보: 그린 그림 + (켜져 있거나 그린 게 없으면) 예시 그림 */
+/** 슬롯 후보: 그린 그림 + (켜져 있으면) 예시 그림. 끄면 우리가 그린 그림만 — 아직 안 그린 부위는 비어 있다 */
 export function candidates(part: PartId, drawings: Drawing[], includeSamples: boolean): ReelItem[] {
   const drawn = activeDrawings(drawings, part).map(drawingItem);
-  return includeSamples || drawn.length === 0 ? [...drawn, ...sampleItems(part)] : drawn;
+  return includeSamples ? [...drawn, ...sampleItems(part)] : drawn;
 }
 
 /** 참조를 그림 주소로. 숨긴 그림도 앨범에서는 보여야 하므로 그대로 푼다 */
@@ -66,17 +65,4 @@ export function shuffle<T>(list: T[], random: () => number = Math.random): T[] {
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
-}
-
-/**
- * 한 판에 쓸 릴 항목: 후보에서 REEL_WINDOW 개까지 무작위로 뽑아 섞는다.
- * 지금 보이는 그림을 맨 앞에 두어 릴이 보이던 그림에서 출발하게 한다.
- */
-export function reelWindow(all: ReelItem[], currentRef: PartRef | null, random: () => number = Math.random): ReelItem[] {
-  const current = all.find((i) => i.ref === currentRef);
-  const rest = shuffle(
-    all.filter((i) => i !== current),
-    random,
-  ).slice(0, REEL_WINDOW - (current ? 1 : 0));
-  return current ? [current, ...rest] : rest;
 }

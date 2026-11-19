@@ -6,7 +6,7 @@
 |---|---|
 | `shared/` | 부위 정의(`parts.ts`), 상한값(`limits.ts`), 타입·입력 검증(`types.ts`), PNG 머리 검사, 별명, 잭팟 |
 | `server/` | Hono 서버. `src/_server/guard.ts`(방어 계층), `src/_server/store.ts`(저장소), `src/routes/*` |
-| `web/` | React 화면. `slot/`(릴·슬롯), `draw/`(캔버스·획·PNG 내보내기), `album/`, `samples/`(예시 SVG) |
+| `web/` | React 화면. `slot/`(릴·슬롯 화면, `layout.ts`는 부위 줄 순서·? 자리·썸네일 줄=릴 항목 계산), `draw/`(캔버스·획·PNG 내보내기), `album/`, `samples/`(예시 SVG) |
 
 ## 로컬 실행
 

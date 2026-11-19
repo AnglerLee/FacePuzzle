@@ -8,18 +8,23 @@ type Phase = "idle" | "spinning" | "stopping";
 interface Hooks {
   onTick: () => void;
   onLanded: (item: ReelItem) => void;
+  /** 창 한가운데 보이는 칸이 바뀌었을 때 (썸네일 줄의 불빛을 옮긴다) */
+  onShow?: (index: number) => void;
 }
 
 export class Reel {
   private readonly imgs: HTMLImageElement[] = [];
   private readonly shownSrc: (string | null)[] = [null, null, null];
   items: ReelItem[] = [];
+  /** 지금 items 의 그림 목록 (같은 목록이면 다시 넣지 않는다) */
+  key = "";
   offset = 0;
   phase: Phase = "idle";
   private speed = 0;
   private spinStart = 0;
   private lastFrame = 0;
   private lastWhole = 0;
+  private lastShown = -1;
   private stopPlan: { from: number; target: number; start: number; duration: number } | null = null;
 
   constructor(
@@ -39,6 +44,8 @@ export class Reel {
 
   setItems(items: ReelItem[], showIndex = 0): void {
     this.items = items;
+    this.key = items.map((i) => i.ref).join(",");
+    this.lastShown = -1;
     this.offset = showIndex;
     this.phase = "idle";
     this.speed = 0;
@@ -46,9 +53,14 @@ export class Reel {
     this.render();
   }
 
+  /** 창 한가운데 있는 칸 번호 (items 안의 위치) */
+  index(): number {
+    return this.items.length === 0 ? -1 : mod(Math.round(this.offset), this.items.length);
+  }
+
   current(): ReelItem | null {
     if (this.items.length === 0) return null;
-    return this.items[mod(Math.round(this.offset), this.items.length)];
+    return this.items[this.index()];
   }
 
   start(now: number): void {
@@ -115,6 +127,11 @@ export class Reel {
 
   /** 그림 k 는 translateY((offset - k) * 100%) 에 놓인다 — offset 이 커지면 그림이 아래로 내려간다 */
   private render(): void {
+    const shown = this.index();
+    if (shown !== this.lastShown) {
+      this.lastShown = shown;
+      if (shown >= 0) this.hooks.onShow?.(shown);
+    }
     const n = this.items.length;
     const base = Math.floor(this.offset);
     for (let k = base - 1; k <= base + 1; k++) {

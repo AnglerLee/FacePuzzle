@@ -1,21 +1,25 @@
 // 그리기 화면: 부위를 골라 확대된 캔버스에 그리고 [저장]하면 바로 다음 그림을 그릴 수 있다 (계속 추가).
-// 짝 부위(눈·귀·눈썹): [양쪽 같이]는 한쪽만 크게 그리면 반대쪽이 거울로 붙는다.
-//   [따로 그리기]는 눈·눈썹이면 두 쪽이 한 캔버스에 나와 한꺼번에 그리고, 귀는 왼쪽·오른쪽을 번갈아 그린다.
-// 거울 붓 부위(얼굴·코·입·머리)는 거울 붓을 켜면 가운데 줄 기준으로 양쪽이 같이 그려진다.
-import { LIMITS } from "@shared/limits";
-import { getPart, imageBox, type PartId } from "@shared/parts";
-import type { Drawing } from "@shared/types";
-import { useEffect, useMemo, useRef, useState } from "react";
+// 모든 부위에 [🪞 거울 모드] / [✏️ 일반 모드]가 있다.
+// - 짝 부위(눈·귀·눈썹): 거울 모드는 한쪽만 크게 그리면 반대쪽이 거울로 똑같이 붙는다.
+//   일반 모드는 눈·눈썹이면 두 쪽이 한 캔버스에 나와 마음대로 그리고, 귀는 왼쪽·오른쪽을 번갈아 그린다.
+// - 나머지(얼굴·코·입·머리): 거울 모드는 가운데 줄 기준으로 양쪽이 같이 그려진다.
+import { activeParts, getPart, imageBox, type Level, type PartId } from "@shared/parts";
+import type { Drawing, PartRef } from "@shared/types";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Screen } from "../app/App";
 import { useData } from "../app/data";
 import { FaceView } from "../face/FaceView";
-import { activeDrawings, DEFAULT_FACE, resolveFace } from "../face/items";
+import { activeDrawings, candidates, DEFAULT_FACE, resolveFace } from "../face/items";
 import { ApiError, drawingUrl, friendlyError } from "../lib/api";
+import { dragScroll } from "../lib/dragScroll";
 import { readPref, writePref } from "../lib/prefs";
 import { buzz, sfx, unlockAudio } from "../lib/sound";
+import { speak } from "../lib/speech";
 import { AuthorSheet } from "../ui/AuthorSheet";
 import { Sheet } from "../ui/Sheet";
 import { useToast } from "../ui/Toast";
+import { ColorSheet } from "./ColorSheet";
+import { CRAYONS, MAIN_CRAYONS, MORE_CRAYONS } from "./colors";
 import { DrawCanvas, type Side } from "./DrawCanvas";
 import { inkPixels, MIN_INK, renderPart, toPngBlob, type Sides } from "./exportPng";
 import {
@@ -24,21 +28,29 @@ import {
   historyOf,
   mirrorStroke,
   pushStroke,
-  redo,
   undo,
   type History,
   type Tool,
 } from "./strokes";
 
-export const CRAYONS = [
-  "#2b2b2b", "#8b5a2b", "#f6c7a1", "#ef4444", "#fb923c", "#facc15",
-  "#22c55e", "#38bdf8", "#3b5bdb", "#a855f7", "#f472b6", "#ffffff",
-];
 const SIZES = [7, 14, 26];
 const SAVE_GAP_MS = 2000;
 
-/** 기본 부위부터 */
+/** 기본 부위부터. 기본 단계에서는 눈·코·입 탭만 보인다 (슬롯 설정의 단계를 따른다) */
 const TAB_ORDER: PartId[] = ["eyes", "nose", "mouth", "face", "ears", "hair", "brows"];
+const tabsFor = (level: Level) => TAB_ORDER.filter((id) => level === "advanced" || getPart(id).level === "basic");
+
+/** 캔버스 위 안내·읽어주기 문구 */
+function hintFor(id: PartId, mirrorMode: boolean, side: Side): string {
+  const p = getPart(id);
+  if (p.symmetry !== "pair" || mirrorMode) return p.hint;
+  if (side === "B") return p.hintBoth ?? p.hint;
+  return p.hint.replace("한쪽", side === "R" ? "오른쪽" : "왼쪽");
+}
+const MODE_SAY = {
+  mirror: "거울 모드! 한쪽만 그리면 반대쪽도 똑같이 생겨요",
+  free: "일반 모드! 마음대로 그려요",
+};
 
 /** 부위별 그리던 획: L 왼쪽(또는 전체), R 오른쪽(귀 따로), B 양쪽 한 캔버스(눈·눈썹 따로) */
 interface Draft {
@@ -75,9 +87,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export function DrawScreen({ go }: { go: (s: Screen) => void }) {
   const { state, authors, authorById, upload, hideDrawing, restoreDrawing } = useData();
   const toast = useToast();
+  const [level] = useState<Level>(() => (readPref<string>("level", "basic") === "advanced" ? "advanced" : "basic"));
+  const tabs = useMemo(() => tabsFor(level), [level]);
   const [partId, setPartId] = useState<PartId>(() => {
     const saved = readPref<string>("drawPart", "eyes");
-    return (TAB_ORDER as string[]).includes(saved) ? (saved as PartId) : "eyes";
+    return (tabs as string[]).includes(saved) ? (saved as PartId) : "eyes";
   });
   const [authorPref, setAuthorPref] = useState<string | null>(() => readPref<string | null>("author", null));
   const [color, setColor] = useState(CRAYONS[0]);
@@ -94,13 +108,19 @@ export function DrawScreen({ go }: { go: (s: Screen) => void }) {
   const [justAdded, setJustAdded] = useState<string | null>(null);
   const [picked, setPicked] = useState<Drawing | null>(null);
   const [authorSheet, setAuthorSheet] = useState(false);
+  const [palette, setPalette] = useState(false);
+  /** 얼굴 전체로 보기 창, 그때 다른 부위에 대 볼 그림들 (비면 기본 얼굴) */
+  const [faceCheck, setFaceCheck] = useState(false);
+  const [faceMix, setFaceMix] = useState<Partial<Record<PartId, PartRef>>>({});
   const lastSave = useRef(0);
+  const [drag] = useState(dragScroll);
 
   const part = getPart(partId);
   const draft = draftOf(drafts, partId);
   const mirror = mirrorMap[partId] ?? part.mirrorDefault;
   const separate = part.symmetry === "pair" && (separateMap[partId] ?? false);
   const together = isTogether(partId);
+  const mirrorMode = part.symmetry === "pair" ? !separate : mirror;
   const activeSide: Side = !separate ? "L" : together ? "B" : side;
   const history = draft[activeSide];
   const authorId = authorPref && authors.some((a) => a.id === authorPref) ? authorPref : (authors[0]?.id ?? null);
@@ -129,8 +149,17 @@ export function DrawScreen({ go }: { go: (s: Screen) => void }) {
     setDraftFor(partId, next);
   }
 
+  /** 거울 모드인지: 짝 부위는 한쪽만 그릴 때, 나머지는 거울 붓이 켜졌을 때 */
+  const mirrorModeOf = (id: PartId) =>
+    getPart(id).symmetry === "pair" ? !separateFor(id) : (mirrorMap[id] ?? getPart(id).mirrorDefault);
+
   function pickPart(id: PartId) {
     unlockAudio();
+    if (id !== partId) {
+      sfx.pop();
+      const sep = separateFor(id);
+      speak(hintFor(id, mirrorModeOf(id), sep && isTogether(id) ? "B" : "L"));
+    }
     setPartId(id);
     writePref("drawPart", id);
     setSide("L");
@@ -142,10 +171,21 @@ export function DrawScreen({ go }: { go: (s: Screen) => void }) {
     writePref("author", id);
   }
 
-  /** [양쪽 같이] ↔ [따로 그리기] */
+  /** [거울 모드] ↔ [일반 모드] */
+  function chooseMode(mirrorMode: boolean) {
+    if (mirrorMode === mirrorModeOf(partId)) return;
+    unlockAudio();
+    speak(mirrorMode ? MODE_SAY.mirror : MODE_SAY.free);
+    if (part.symmetry === "pair") chooseSeparate(!mirrorMode);
+    else {
+      setMirrorMap((m) => ({ ...m, [partId]: mirrorMode }));
+      sfx.pop();
+    }
+  }
+
+  /** 짝 부위: 거울(한쪽만) ↔ 따로(양쪽 다) */
   function chooseSeparate(next: boolean) {
     if (next === separate) return;
-    unlockAudio();
     setSeparateMap((m) => ({ ...m, [partId]: next }));
     let d = draft;
     // 한쪽만 그려 둔 게 있으면 두 쪽 캔버스에 양쪽으로 옮겨 이어 그리게 한다
@@ -187,6 +227,7 @@ export function DrawScreen({ go }: { go: (s: Screen) => void }) {
       setJustAdded(drawing.id);
       sfx.save();
       buzz(30);
+      speak("짠! 저장했어요");
       toast(`${part.label} 저장! 하나 더 그려 볼까요? ✨`, { tone: "success" });
     } catch (error) {
       if (error instanceof ApiError && error.code === "rate_limited" && error.retryAfterSec > 0) {
@@ -222,99 +263,119 @@ export function DrawScreen({ go }: { go: (s: Screen) => void }) {
   const miniSrcs = { ...resolveFace(DEFAULT_FACE) };
   if (preview) miniSrcs[partId] = preview;
   else delete miniSrcs[partId];
+  const bigSrcs = { ...resolveFace({ ...DEFAULT_FACE, ...faceMix }) };
+  if (preview) bigSrcs[partId] = preview;
+  else delete bigSrcs[partId];
+
+  function openFaceCheck() {
+    unlockAudio();
+    sfx.pop();
+    setFaceCheck(true);
+    speak(preview ? "짠! 내 그림을 얼굴에 붙여 봤어요" : "아직 그린 게 없어요");
+  }
+
+  /** 다른 부위를 슬롯 후보에서 아무거나 골라 내 그림을 대 본다. 이 단계에서 안 도는 부위는 기본 얼굴 그대로 */
+  function shuffleFace() {
+    unlockAudio();
+    sfx.pop();
+    const next: Partial<Record<PartId, PartRef>> = {};
+    const withSamples = readPref("samples", true);
+    for (const p of activeParts(level)) {
+      if (p.id === partId) continue;
+      // 슬롯 설정을 따른다: 예시를 껐으면 가족 그림 중에서만 (없는 부위는 기본 얼굴 그대로)
+      const pool = candidates(p.id, state?.drawings ?? [], withSamples);
+      const now = faceMix[p.id] ?? DEFAULT_FACE[p.id];
+      const others = pool.length > 1 ? pool.filter((i) => i.ref !== now) : pool;
+      next[p.id] = others[Math.floor(Math.random() * others.length)]?.ref ?? DEFAULT_FACE[p.id];
+    }
+    setFaceMix(next);
+  }
 
   const canUndo = history.past.length > 0;
-  const canRedo = history.future.length > 0;
+  const pickColor = (c: string) => {
+    setColor(c);
+    setTool("pen");
+  };
+  // 늘 보이는 6색이 아닌 색(🌈 창의 크레용·팔레트 색)이면 🌈 버튼 가운데에 그 색을 보여 준다
+  const paletteOn = tool === "pen" && !MAIN_CRAYONS.includes(color);
+  const author = authorId ? authorById.get(authorId) : undefined;
 
   return (
     <div className="screen draw-screen">
-      <header className="topbar">
-        <button type="button" className="nav-btn" onClick={() => go("slot")}>
-          <span aria-hidden>🎰</span>슬롯
-        </button>
-        <h1 className="title">그리기</h1>
-        <button type="button" className="nav-btn" onClick={() => go("album")}>
-          <span aria-hidden>📒</span>앨범
-        </button>
+      <header className={`draw-head ${tabs.length > 3 ? "is-many" : ""}`} style={{ "--tabs": tabs.length } as CSSProperties}>
+        <nav className="part-tabs" aria-label="부위">
+          {tabs.map((id) => {
+            const p = getPart(id);
+            return (
+              <button
+                type="button"
+                key={id}
+                className={`part-tab ${id === partId ? "on" : ""}`}
+                onClick={() => pickPart(id)}
+                aria-pressed={id === partId}
+              >
+                <span aria-hidden>{p.emoji}</span>
+                <small>{p.label}</small>
+              </button>
+            );
+          })}
+        </nav>
       </header>
-
-      <nav className="part-tabs" aria-label="부위">
-        {TAB_ORDER.map((id) => {
-          const p = getPart(id);
-          return (
-            <button
-              type="button"
-              key={id}
-              className={`part-tab ${id === partId ? "on" : ""}`}
-              onClick={() => pickPart(id)}
-              aria-pressed={id === partId}
-            >
-              <span aria-hidden>{p.emoji}</span>
-              {p.label}
-              {p.level === "advanced" && <small>심화</small>}
-            </button>
-          );
-        })}
-      </nav>
 
       <div className="draw-body">
         <section className="canvas-col">
           <div className="draw-options">
-            {part.symmetry === "pair" ? (
-              <>
-                <div className="segmented small" role="radiogroup" aria-label="양쪽 그리기">
-                  <button type="button" role="radio" aria-checked={!separate} className={!separate ? "on" : ""} onClick={() => chooseSeparate(false)}>
-                    🪞 양쪽 같이
-                  </button>
-                  <button type="button" role="radio" aria-checked={separate} className={separate ? "on" : ""} onClick={() => chooseSeparate(true)}>
-                    ✌️ 따로 그리기
-                  </button>
-                </div>
-                {separate && !together && (
-                  <div className="segmented small" role="radiogroup" aria-label="어느 쪽">
-                    <button type="button" role="radio" aria-checked={side === "L"} className={side === "L" ? "on" : ""} onClick={() => setSide("L")}>
-                      왼쪽
-                    </button>
-                    <button type="button" role="radio" aria-checked={side === "R"} className={side === "R" ? "on" : ""} onClick={() => setSide("R")}>
-                      오른쪽
-                    </button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className={`toggle ${mirror ? "on" : ""}`}
-                  onClick={() => setMirrorMap((m) => ({ ...m, [partId]: !mirror }))}
-                  aria-pressed={mirror}
-                >
-                  {mirror ? "🪞 거울 붓 켬" : "🪞 거울 붓 끔"}
-                </button>
-                <span className="option-note">{mirror ? "가운데 줄 기준으로 양쪽에 같이 그려져요" : "마음대로 그려요"}</span>
-              </>
-            )}
-            {(() => {
-              const a = authorId ? authorById.get(authorId) : undefined;
-              return (
-                <button
-                  type="button"
-                  className="author-chip current"
-                  style={{ borderColor: a?.color, background: a?.color }}
-                  onClick={() => setAuthorSheet(true)}
-                  aria-label="그린 사람 고르기"
-                >
-                  <span aria-hidden>{a?.emoji ?? "🙂"}</span>
-                  {a?.name ?? "누구?"} ▾
-                </button>
-              );
-            })()}
+            <div className="segmented small mode-switch" role="radiogroup" aria-label="그리는 방법">
+              <button type="button" role="radio" aria-checked={mirrorMode} className={mirrorMode ? "on" : ""} onClick={() => chooseMode(true)}>
+                🪞 거울 모드
+              </button>
+              <button type="button" role="radio" aria-checked={!mirrorMode} className={!mirrorMode ? "on" : ""} onClick={() => chooseMode(false)}>
+                ✏️ 일반 모드
+              </button>
+            </div>
+            <span className="options-spacer" />
+            <button
+              type="button"
+              className="author-chip current"
+              style={{ borderColor: author?.color, background: author?.color }}
+              onClick={() => setAuthorSheet(true)}
+              aria-label="그린 사람 고르기"
+            >
+              <span aria-hidden>{author?.emoji ?? "🙂"}</span>
+              <span className="author-name">{author?.name ?? "누구?"}</span>
+            </button>
+            <button type="button" className="mini-preview" onClick={openFaceCheck} aria-label="얼굴 전체로 보기">
+              <FaceView srcs={miniSrcs} dimOthers={partId} />
+              <span className="mini-zoom" aria-hidden>
+                🔍
+              </span>
+            </button>
           </div>
 
           <div className="canvas-area">
+            {/* 귀 일반 모드: 캔버스 양옆 빈자리에 왼쪽·오른쪽 (그 쪽에 있는 버튼이 그 쪽 귀) */}
+            {separate && !together &&
+              (["L", "R"] as const).map((s) => (
+                <button
+                  type="button"
+                  key={s}
+                  role="radio"
+                  aria-checked={side === s}
+                  className={`ear-side ear-side-${s} ${side === s ? "on" : ""}`}
+                  onClick={() => {
+                    sfx.pop();
+                    setSide(s);
+                    speak(hintFor(partId, false, s));
+                  }}
+                >
+                  <span aria-hidden>{s === "L" ? "◀" : "▶"}</span>
+                  <small>{s === "L" ? "왼쪽" : "오른쪽"}</small>
+                </button>
+              ))}
             <DrawCanvas
               part={part}
               side={activeSide}
+              hint={hintFor(partId, mirrorMode, activeSide)}
               strokes={history.present}
               tool={tool}
               color={color}
@@ -322,9 +383,6 @@ export function DrawScreen({ go }: { go: (s: Screen) => void }) {
               mirror={mirror}
               onCommit={(s) => changeHistory((h) => pushStroke(h, s))}
             />
-            <div className="mini-preview" aria-label="완성 얼굴 미리보기">
-              <FaceView srcs={miniSrcs} dimOthers={partId} />
-            </div>
           </div>
         </section>
 
@@ -337,29 +395,40 @@ export function DrawScreen({ go }: { go: (s: Screen) => void }) {
                 role="radio"
                 aria-checked={tool === "pen" && color === c}
                 aria-label={c}
-                className={`crayon ${tool === "pen" && color === c ? "on" : ""}`}
+                className={`crayon ${MORE_CRAYONS.includes(c) ? "more" : ""} ${tool === "pen" && color === c ? "on" : ""}`}
                 style={{ background: c }}
-                onClick={() => {
-                  setColor(c);
-                  setTool("pen");
-                }}
+                onClick={() => pickColor(c)}
               />
             ))}
+            <button
+              type="button"
+              className={`crayon rainbow ${paletteOn ? "on" : ""}`}
+              onClick={() => {
+                unlockAudio();
+                sfx.pop();
+                setPalette(true);
+              }}
+              aria-label="다른 색 고르기 (팔레트)"
+            >
+              <span aria-hidden style={paletteOn ? { background: color } : undefined}>
+                {paletteOn ? "" : "🌈"}
+              </span>
+            </button>
           </div>
 
           <div className="tools">
             <div className="sizes" role="radiogroup" aria-label="굵기">
-              {SIZES.map((s, i) => (
+              {SIZES.map((sz, i) => (
                 <button
                   type="button"
-                  key={s}
+                  key={sz}
                   role="radio"
                   aria-checked={sizeIdx === i}
                   aria-label={["가늘게", "보통", "굵게"][i]}
                   className={`size-btn ${sizeIdx === i ? "on" : ""}`}
                   onClick={() => setSizeIdx(i)}
                 >
-                  <span style={{ width: 6 + i * 6, height: 6 + i * 6, background: tool === "eraser" ? "#bbb" : color }} />
+                  <span style={{ width: 6 + i * 7, height: 6 + i * 7, background: tool === "eraser" ? "#bbb" : color }} />
                 </button>
               ))}
             </div>
@@ -368,58 +437,65 @@ export function DrawScreen({ go }: { go: (s: Screen) => void }) {
               className={`tool-btn ${tool === "eraser" ? "on" : ""}`}
               onClick={() => setTool(tool === "eraser" ? "pen" : "eraser")}
               aria-pressed={tool === "eraser"}
+              aria-label="지우개"
             >
-              🧽<small>지우개</small>
+              🧽
             </button>
-            <button type="button" className="tool-btn" onClick={() => changeHistory(undo)} disabled={!canUndo}>
-              ↶<small>뒤로</small>
+            <button type="button" className="tool-btn" onClick={() => changeHistory(undo)} disabled={!canUndo} aria-label="하나 되돌리기">
+              ↶
             </button>
-            <button type="button" className="tool-btn hide-narrow" onClick={() => changeHistory(redo)} disabled={!canRedo}>
-              ↷<small>앞으로</small>
-            </button>
-            <button type="button" className="tool-btn" onClick={() => changeHistory(clearAll)} disabled={history.present.length === 0}>
-              🗑<small>다 지우기</small>
+            <button
+              type="button"
+              className="tool-btn"
+              onClick={() => changeHistory(clearAll)}
+              disabled={history.present.length === 0}
+              aria-label="다 지우기"
+            >
+              🗑
             </button>
             <button type="button" className="save-btn" onClick={save} disabled={saving || cooldown > 0}>
-              {saving ? "저장 중…" : cooldown > 0 ? `⏳ ${cooldown}초 쉬어요` : `✔ ${part.label} 저장`}
+              {saving ? "저장 중…" : cooldown > 0 ? `⏳ ${cooldown}초` : "✔ 저장"}
             </button>
           </div>
 
-
-
-          <div className="strip">
-            <button
-              type="button"
-              className="strip-item add"
-              onClick={() => {
-                setDraftFor(partId, emptyDraft());
-                setSide("L");
-              }}
-            >
-              ➕<small>새 그림</small>
-              <small className="strip-count">
-                {list.length}/{LIMITS.perPartActive}
-              </small>
+          <div className="strip-row">
+            <button type="button" className="slot-go" onClick={() => go("slot")} aria-label="슬롯으로 가서 돌리기">
+              <span aria-hidden>🎰</span>슬롯
             </button>
-            {list.map((d) => {
-              const author = d.authorId ? authorById.get(d.authorId) : undefined;
-              return (
-                <button
-                  type="button"
-                  key={d.id}
-                  className={`strip-item ${d.id === justAdded ? "is-new" : ""}`}
-                  style={{ borderColor: author?.color }}
-                  onClick={() => setPicked(d)}
-                >
-                  <img src={drawingUrl(d.id)} alt={`${part.label} 그림`} loading="lazy" draggable={false} />
-                  {author && <span className="strip-author">{author.emoji}</span>}
-                </button>
-              );
-            })}
+            <div className="strip" aria-label={`${part.label} 그림 ${list.length}장`} {...drag}>
+              {list.length === 0 ? (
+                <p className="strip-empty">
+                  저장한 {part.label} 그림이 여기 모여요 {part.emoji}
+                </p>
+              ) : (
+                <>
+                  <span className="strip-count">
+                    {part.emoji}
+                    <b>{list.length}</b>
+                  </span>
+                  {list.map((d) => {
+                    const a = d.authorId ? authorById.get(d.authorId) : undefined;
+                    return (
+                      <button
+                        type="button"
+                        key={d.id}
+                        className={`strip-item ${d.id === justAdded ? "is-new" : ""}`}
+                        style={{ borderColor: a?.color }}
+                        onClick={() => setPicked(d)}
+                      >
+                        <img src={drawingUrl(d.id)} alt={`${part.label} 그림`} loading="lazy" draggable={false} />
+                        {a && <span className="strip-author">{a.emoji}</span>}
+                      </button>
+                    );
+                  })}
+                </>
+              )}
+            </div>
           </div>
         </section>
       </div>
 
+      {palette && <ColorSheet color={color} onPick={pickColor} onClose={() => setPalette(false)} />}
       {picked && (
         <Sheet title={`${part.label} 그림`} onClose={() => setPicked(null)}>
           <div className="picked">
@@ -439,6 +515,28 @@ export function DrawScreen({ go }: { go: (s: Screen) => void }) {
               </button>
               <button type="button" className="primary-btn" onClick={() => setPicked(null)}>
                 닫기
+              </button>
+            </div>
+          </div>
+        </Sheet>
+      )}
+      {faceCheck && (
+        <Sheet title="얼굴 전체로 보기" onClose={() => setFaceCheck(false)}>
+          <div className="face-check">
+            <div className="face-check-stage">
+              <FaceView srcs={bigSrcs} />
+              {!preview && (
+                <p className="face-check-empty">
+                  {part.emoji} 아직 {part.label} 그림이 없어요
+                </p>
+              )}
+            </div>
+            <div className="form-actions">
+              <button type="button" className="ghost-btn" onClick={shuffleFace} aria-label="다른 얼굴에 대 보기">
+                🔀 다른 얼굴
+              </button>
+              <button type="button" className="primary-btn" onClick={() => setFaceCheck(false)}>
+                ✏️ 계속 그리기
               </button>
             </div>
           </div>

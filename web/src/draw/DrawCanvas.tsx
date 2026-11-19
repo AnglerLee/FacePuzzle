@@ -19,6 +19,21 @@ export function regionFor(box: Box, tight = false): Box {
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
+/**
+ * 보여 줄 범위를 캔버스 칸의 비율에 맞춰 넓힌다 (확대 배율은 그대로).
+ * 키가 큰 폰에서 눈처럼 가로로 긴 부위를 그릴 때 위아래가 비지 않고 얼굴이 더 보인다.
+ */
+export function fillRegion(r: Box, target: number): Box {
+  if (!(target > 0)) return r;
+  const clamp = (v: number, max: number) => Math.min(Math.max(v, 0), max);
+  if (target < r.w / r.h) {
+    const h = Math.min(FACE_SIZE, r.w / target);
+    return { x: r.x, y: clamp(r.y + r.h / 2 - h / 2, FACE_SIZE - h), w: r.w, h };
+  }
+  const w = Math.min(FACE_SIZE, r.h * target);
+  return { x: clamp(r.x + r.w / 2 - w / 2, FACE_SIZE - w), y: r.y, w, h: r.h };
+}
+
 export function originFor(part: PartDef, side: Side): Box {
   if (part.symmetry !== "pair") return part.draw;
   if (side === "B") return imageBox(part);
@@ -33,6 +48,8 @@ interface Props {
   color: string;
   size: number;
   mirror: boolean;
+  /** 아직 아무것도 안 그렸을 때 위에 띄우는 안내 */
+  hint: string;
   onCommit: (stroke: Stroke) => void;
 }
 
@@ -41,34 +58,35 @@ const MIN_STEP = 1.2;
 /** 긴 머리가 가리는 부위: 이 부위를 그릴 때는 흐린 배경 얼굴에서 머리를 뺀다 */
 const HAIR_HIDES = new Set(["ears", "face"]);
 
-export function DrawCanvas({ part, side, strokes, tool, color, size, mirror, onCommit }: Props) {
+export function DrawCanvas({ part, side, strokes, tool, color, size, mirror, hint, onCommit }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [board, setBoard] = useState({ w: 0, h: 0 });
+  const [space, setSpace] = useState({ w: 0, h: 0 });
   const [drawing, setDrawing] = useState(false);
   const pointers = useRef(new Set<number>());
   const current = useRef<{ id: number; stroke: Stroke } | null>(null);
 
   const box = originFor(part, side);
-  // 양쪽을 한 번에 그릴 때는 가로로 길어서 둘레를 좁혀 그릴 칸을 키운다
-  const region = regionFor(box, side === "B");
+  // 양쪽을 한 번에 그릴 때는 가로로 길어서 둘레를 좁혀 그릴 칸을 키운다. 남는 칸은 얼굴을 더 보여 준다
+  const region = fillRegion(regionFor(box, side === "B"), space.h > 0 ? space.w / space.h : 0);
   const aspect = region.w / region.h;
+  const boardW = Math.floor(Math.min(space.w, space.h * aspect));
+  const board = { w: boardW, h: Math.floor(boardW / aspect) };
 
-  // 들어갈 자리에 맞춰 판 크기를 정한다 (비율 유지)
+  // 들어갈 자리 크기를 잰다 (판은 그 안에 비율을 지켜 들어간다)
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const fit = () => {
+    const measure = () => {
       const { width, height } = wrap.getBoundingClientRect();
       if (width <= 0 || height <= 0) return;
-      const w = Math.min(width, height * aspect);
-      setBoard({ w: Math.floor(w), h: Math.floor(w / aspect) });
+      setSpace({ w: Math.floor(width), h: Math.floor(height) });
     };
-    fit();
-    const ro = new ResizeObserver(fit);
+    measure();
+    const ro = new ResizeObserver(measure);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [aspect]);
+  }, []);
 
   /** 얼굴 단위 → 캔버스 픽셀 변환과 영역 자르기를 건 ctx */
   function prepared(reset: boolean): CanvasRenderingContext2D | null {
@@ -174,8 +192,6 @@ export function DrawCanvas({ part, side, strokes, tool, color, size, mirror, onC
           ? [rightGuide]
           : [leftGuide];
   const showHint = strokes.length === 0 && !drawing;
-  const hint =
-    side === "B" ? (part.hintBoth ?? part.hint) : side === "R" ? part.hint.replace("왼쪽", "오른쪽") : part.hint;
 
   return (
     <div className="draw-wrap" ref={wrapRef}>

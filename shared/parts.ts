@@ -20,17 +20,17 @@ export interface PartDef {
   /** 그리는 영역. 짝 부위(pair)는 왼쪽 한쪽 영역이다 */
   draw: Box;
   /**
-   * pair: "양쪽 같이"면 한쪽만 그리고 반대쪽은 x=500 기준 거울로 붙는다.
-   * mirror: 영역 하나에 그리고, 거울 붓을 켜면 영역 가운데 세로줄 기준으로 같이 그려진다.
+   * pair: 거울 모드면 한쪽만 그리고 반대쪽은 x=500 기준 거울로 붙는다.
+   * mirror: 영역 하나에 그리고, 거울 모드(거울 붓)면 영역 가운데 세로줄 기준으로 같이 그려진다.
    */
   symmetry: "pair" | "mirror";
   /**
-   * 짝 부위를 "따로 그리기"로 그릴 때:
+   * 짝 부위를 일반 모드(양쪽 따로)로 그릴 때:
    * together: 양쪽이 한 캔버스에 나와 한꺼번에 그린다 (눈·눈썹처럼 양쪽이 가까운 부위)
    * sides: 왼쪽·오른쪽을 번갈아 크게 그린다 (귀처럼 양쪽이 멀리 떨어진 부위)
    */
   pairEdit?: "together" | "sides";
-  /** mirror 부위의 거울 붓 기본값 */
+  /** mirror 부위의 거울 모드 기본값 */
   mirrorDefault: boolean;
   /** 아래(0)에서 위로 겹치는 순서 */
   z: number;
@@ -58,7 +58,7 @@ export const PARTS: readonly PartDef[] = [
     z: 0,
     stopOrder: 5,
     guide: ["M150,40 C60,10 14,110 36,178 C54,232 118,246 152,214"],
-    hint: "왼쪽 귀를 그려요",
+    hint: "한쪽 귀를 그려요",
   },
   {
     id: "face",
@@ -88,7 +88,7 @@ export const PARTS: readonly PartDef[] = [
       "M40,130 A105,72 0 1,0 250,130 A105,72 0 1,0 40,130 Z",
       "M117,130 A28,28 0 1,0 173,130 A28,28 0 1,0 117,130 Z",
     ],
-    hint: "왼쪽 눈을 그려요",
+    hint: "한쪽 눈을 그려요",
     hintBoth: "두 눈을 그려요",
   },
   {
@@ -129,7 +129,7 @@ export const PARTS: readonly PartDef[] = [
     z: 5,
     stopOrder: 1,
     guide: ["M40,78 Q145,14 250,70"],
-    hint: "왼쪽 눈썹을 그려요",
+    hint: "한쪽 눈썹을 그려요",
     hintBoth: "두 눈썹을 그려요",
   },
   {

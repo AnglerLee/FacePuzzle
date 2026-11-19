@@ -1,5 +1,5 @@
 // 그린 획을 저장용 PNG(부위 imageBox 크기, 1단위 = 1px)로 만든다.
-// 짝 부위: 왼쪽을 그리고 오른쪽은 거울로 붙이거나(양쪽 같이), 따로 그린 오른쪽을 붙이거나(귀), 양쪽을 한 캔버스에 그린 획을 그대로 쓴다(눈·눈썹).
+// 짝 부위: 왼쪽을 그리고 오른쪽은 거울로 붙이거나(거울 모드), 따로 그린 오른쪽을 붙이거나(귀 일반 모드), 양쪽을 한 캔버스에 그린 획을 그대로 쓴다(눈·눈썹 일반 모드).
 import { imageBox, type PartDef } from "@shared/parts";
 import { renderStrokes, type Stroke } from "./strokes";
 
