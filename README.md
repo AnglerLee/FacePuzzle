@@ -58,7 +58,7 @@ flowchart TB
   subgraph BUILD["② npm run build"]
     direction LR
     vite["Vite<br/>base /facepuzzle/"]
-    esb["esbuild<br/>의존성까지 한 파일"]
+    esb["esbuild<br/>의존성까지<br/>한 파일로"]
   end
   WEB --> vite --> wdist["<b>web/dist/</b><br/>정적 파일"]
   server --> esb --> sdist["<b>server/dist/</b><br/>server.mjs + manifest.json"]
