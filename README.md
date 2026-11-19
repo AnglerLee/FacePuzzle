@@ -38,15 +38,55 @@
 - 지운 그림은 30일 동안 휴지통에서 되살릴 수 있다
 - 단계(기본/심화)·예시 그림 섞기·소리·읽어주기는 슬롯 화면 아래 ⚙️ 설정에 모았다
 
-## 바로가기
+## 구조와 빌드
 
-https://pros2.synology.me/facepuzzle/
+```mermaid
+flowchart TB
+  subgraph SRC["① 소스 — 이 레포"]
+    direction LR
+    shared["<b>shared/</b><br/>부위 정의 · 상한값 · 입력 검증"]
+    subgraph WEB["web/ — React 화면"]
+      direction LR
+      draw["✏️ 그리기<br/>부위별 캔버스"] -- "저장한 그림" --> slot["🎰 슬롯<br/>부위별 릴"]
+      slot -- "완성 얼굴" --> album["📒 앨범"]
+    end
+    server["<b>server/</b><br/>Hono API<br/>방어 · 저장소"]
+  end
+  shared --> WEB
+  shared --> server
 
-## 만든 방법
+  subgraph BUILD["② npm run build"]
+    direction LR
+    vite["Vite<br/>base /facepuzzle/"]
+    esb["esbuild<br/>의존성까지 한 파일"]
+  end
+  WEB --> vite --> wdist["<b>web/dist/</b><br/>정적 파일"]
+  server --> esb --> sdist["<b>server/dist/</b><br/>server.mjs + manifest.json"]
 
-화면은 React, 그림을 저장하는 작은 서버는 Hono로 만들었다. 화면과 서버가 같은 레포에 있고,
-[AnglerBox](https://github.com/AnglerLee/AnglerBox)가 둘을 나눠 빌드해 함께 게시한다.
+  subgraph RUN["③ 실행"]
+    direction LR
+    browser["📱 브라우저<br/>/facepuzzle/"]
+    api["Node 22<br/>/api/facepuzzle"]
+    data[("DATA_DIR/facepuzzle/<br/>index.json · drawings/*.png")]
+    browser -- "그림 PNG · 앨범" --> api --> data
+  end
+  wdist -. "정적 게시" .-> browser
+  sdist -. "불러와 실행" .-> api
+```
+
+1. **소스**: 화면(`web/`, React)과 그림을 저장하는 작은 서버(`server/`, Hono)가 한 레포에 있다.
+   부위마다 그리는 영역·그림 크기·상한값은 `shared/`에 두고 둘이 같이 쓴다.
+2. **빌드**: `npm run build` 하나로 화면은 Vite가 `web/dist/`로, 서버는 esbuild가 의존성까지 묶어 `server/dist/server.mjs` 한 파일로 만든다.
+3. **실행**: 브라우저는 `/facepuzzle/`의 정적 파일을 받고, 그린 그림(PNG)과 앨범은 같은 도메인의 `/api/facepuzzle`로 보낸다.
+   서버는 `DATA_DIR/facepuzzle/`에 목록(`index.json`)과 그림 파일을 쌓아서 가족 기기끼리 같은 그림을 본다.
+
 키 없이 열려 있는 대신 서버가 과도한 입력을 막는다 (크기·형식 검사, IP별·전체 속도 제한, 저장 할당량).
+
+```bash
+npm run setup   # web·server 의존성 설치 (Node 22)
+npm run dev     # server :8080 + web :5173 → http://localhost:5173/facepuzzle/
+npm test && npm run lint && npm run build
+```
 
 ---
 
