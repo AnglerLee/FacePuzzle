@@ -1,0 +1,11 @@
+{
+  "name": "facepuzzle",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix web ci && npm --prefix server ci",
+    "dev": "bash scripts/dev.sh",
+    "test": "npm --prefix server test && npm --prefix web test",
+    "lint": "npm --prefix server run lint && npm --prefix web run lint",
+    "build": "npm --prefix server run build && npm --prefix web run build"
+  }
+}

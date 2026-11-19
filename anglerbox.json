@@ -1,0 +1,9 @@
+{
+  "slug": "facepuzzle",
+  "title": "뒤죽박죽 얼굴 슬롯",
+  "summary": "눈·코·입을 여러 개 그려 두고 슬롯머신처럼 돌려서 웃긴 얼굴을 완성하는 그림 놀이",
+  "category": "game",
+  "tags": ["아이", "그림", "슬롯머신", "가족"],
+  "runMode": "navigate",
+  "collection": "kids"
+}

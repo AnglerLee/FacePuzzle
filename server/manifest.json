@@ -1,0 +1,5 @@
+{
+  "name": "facepuzzle",
+  "entry": "server.mjs",
+  "prefixes": ["/api/facepuzzle"]
+}
