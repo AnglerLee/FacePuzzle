@@ -154,6 +154,13 @@ img {
   color: #c2334f;
   border-color: #ffc9d4;
 }
+.primary-btn.danger {
+  background: var(--pink);
+  box-shadow: 0 4px 0 var(--pink-dark);
+}
+.primary-btn.danger:active {
+  box-shadow: 0 1px 0 var(--pink-dark);
+}
 .toggle {
   min-height: 40px;
   padding: 0 12px;
@@ -807,6 +814,62 @@ img {
   margin-top: 2px;
   font-size: 11px;
 }
+/* 꾹 눌러 지우기: 그린 그림이 달달 떨고 ✕ 가 뜬다. 예시 그림은 흐리게 (못 지운다) */
+.slot-row.is-editing {
+  border-style: dashed;
+  border-color: var(--pink);
+  background: #fff0f3;
+}
+.slot-row.is-editing .row-btn {
+  background: var(--pink);
+  box-shadow: 0 4px 0 var(--pink-dark);
+}
+.slot-row.is-editing .thumb-item {
+  z-index: 3;
+  overflow: visible;
+  animation: jiggle 0.33s ease-in-out infinite alternate;
+}
+.slot-row.is-editing .thumb-item.is-sample {
+  opacity: 0.4;
+  animation: none;
+}
+@keyframes jiggle {
+  from {
+    transform: rotate(-2.5deg);
+  }
+  to {
+    transform: rotate(2.5deg);
+  }
+}
+.thumb-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  background: var(--pink-dark);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
+  animation: rise 0.2s ease-out;
+}
+/* 작은 ✕ 를 손가락으로 누르기 쉽게 눌리는 곳만 넓힌다 */
+.thumb-x::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .slot-row.is-editing .thumb-item {
+    animation: none;
+  }
+}
 .lamp {
   position: absolute;
   left: 0;
@@ -939,6 +1002,40 @@ img {
 .settings-note {
   font-size: 13px;
   color: var(--muted);
+}
+.setting-toggle.is-danger {
+  color: #c2334f;
+  border-color: #ffc9d4;
+}
+.setting-toggle.is-danger b {
+  background: #ffe3e9;
+  color: #c2334f;
+}
+.reset-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.reset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 3px solid var(--line);
+  background: var(--paper);
+  font-size: 16px;
+  white-space: nowrap;
+}
+.reset-chip b {
+  margin-left: 2px;
+  font-weight: normal;
+  color: var(--muted);
+}
+.reset-chip.on {
+  border-color: var(--pink);
+  background: #fff0f3;
 }
 
 /* 좁은 폰: 그린 사람은 이모지만 (🧒 나 · 👩 엄마 · 👨 아빠) — 거울/일반 모드와 미리보기를 한 줄에 */
@@ -1305,6 +1402,12 @@ img {
 .trash-title {
   margin: 14px 0 6px;
   font-size: 17px;
+}
+.trash-batch {
+  width: 100%;
+  min-height: 46px;
+  margin-bottom: 8px;
+  font-size: 15px;
 }
 .trash-grid {
   display: grid;

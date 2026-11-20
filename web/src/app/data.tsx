@@ -1,7 +1,7 @@
 // 서버 상태(작가·그림·앨범)를 들고 있는 컨텍스트. 바꾸는 요청은 돌아온 항목 하나만 목록에 반영한다.
 // 화면이 다시 보일 때(다른 기기에서 그린 그림) 새로 받아 온다.
 import type { PartId } from "@shared/parts";
-import type { AlbumEntry, AlbumInput, Author, AuthorInput, Drawing, FaceState } from "@shared/types";
+import type { AlbumEntry, AlbumInput, Author, AuthorInput, BulkHideResult, Drawing, FaceState } from "@shared/types";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 
@@ -14,6 +14,10 @@ interface DataContextValue {
   upload: (part: PartId, authorId: string | null, png: Blob) => Promise<Drawing>;
   hideDrawing: (id: string) => Promise<void>;
   restoreDrawing: (id: string) => Promise<void>;
+  /** 고른 부위 그림을 한꺼번에 숨긴다 (설정의 초기화) */
+  hideParts: (parts: PartId[]) => Promise<BulkHideResult>;
+  /** 한꺼번에 숨긴 그림을 그때 시각(hiddenAt)으로 한 번에 되살린다. 되살린 장 수 */
+  restoreBatch: (hiddenAt: string) => Promise<number>;
   addAuthor: (input: AuthorInput) => Promise<Author>;
   updateAuthor: (id: string, input: Partial<AuthorInput>) => Promise<void>;
   hideAuthor: (id: string) => Promise<void>;
@@ -78,6 +82,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setState((s) => (s ? { ...s, [key]: upsert(s[key] as { id: string }[], item as { id: string }) } : s));
   }, []);
 
+  const patchDrawings = useCallback((items: Drawing[]) => {
+    const byId = new Map(items.map((d) => [d.id, d]));
+    setState((s) => (s ? { ...s, drawings: s.drawings.map((d) => byId.get(d.id) ?? d) } : s));
+  }, []);
+
   const value = useMemo<DataContextValue>(() => {
     const authors = (state?.authors ?? []).filter((a) => !a.hiddenAt);
     return {
@@ -93,6 +102,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       },
       hideDrawing: async (id) => patch("drawings", await api.hideDrawing(id)),
       restoreDrawing: async (id) => patch("drawings", await api.restoreDrawing(id)),
+      hideParts: async (parts) => {
+        const result = await api.hideDrawingsOfParts(parts);
+        patchDrawings(result.drawings);
+        return result;
+      },
+      restoreBatch: async (hiddenAt) => {
+        const back = await api.restoreDrawingsHiddenAt(hiddenAt);
+        patchDrawings(back);
+        return back.length;
+      },
       addAuthor: async (input) => {
         const a = await api.addAuthor(input);
         patch("authors", a);
@@ -110,7 +129,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       hideAlbum: async (id) => patch("album", await api.hideAlbum(id)),
       restoreAlbum: async (id) => patch("album", await api.restoreAlbum(id)),
     };
-  }, [state, loadError, refresh, patch]);
+  }, [state, loadError, refresh, patch, patchDrawings]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }

@@ -45,6 +45,8 @@ export const RATE = {
   albumIp: { burst: 20, windowMs: MIN },
   authorIp: { burst: 5, windowMs: 2.5 * MIN },
   removeIp: { burst: 30, windowMs: MIN },
+  /** 한꺼번에 지우기(설정의 초기화)·한꺼번에 되살리기. 한 번에 많이 바꾸므로 따로 적게 둔다 */
+  bulkIp: { burst: 5, windowMs: MIN },
   writeGlobal: { burst: 120, windowMs: MIN },
   stateIp: { burst: 30, windowMs: 30_000 },
   imageIp: { burst: 1500, windowMs: MIN },

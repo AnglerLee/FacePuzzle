@@ -14,6 +14,7 @@ import {
   type AlbumInput,
   type Author,
   type AuthorInput,
+  type BulkHideResult,
   type Drawing,
   type FaceState,
 } from "@shared/types";
@@ -260,6 +261,34 @@ export function restoreDrawing(id: string, now = new Date()): Promise<Drawing> {
       delete d.hiddenAt;
     }
     return d;
+  });
+}
+
+/** 고른 부위의 보이는 그림을 한꺼번에 숨긴다 (설정의 초기화). 모두 같은 hiddenAt 이라 한 번에 되살릴 수 있다 */
+export function hideDrawingsOfParts(parts: PartId[], now = new Date()): Promise<BulkHideResult> {
+  return mutate(now, (doc) => {
+    const want = new Set(parts);
+    const hiddenAt = now.toISOString();
+    const changed = doc.drawings.filter((d) => want.has(d.part) && !d.hiddenAt);
+    for (const d of changed) d.hiddenAt = hiddenAt;
+    return { hiddenAt, drawings: changed };
+  });
+}
+
+/** 한꺼번에 숨긴 그림(같은 hiddenAt)을 되살린다. 그사이 새로 그려 부위가 넘치면 하나도 안 되살리고 409 */
+export function restoreDrawingsHiddenAt(hiddenAt: string, now = new Date()): Promise<Drawing[]> {
+  return mutate(now, (doc) => {
+    const targets = doc.drawings.filter((d) => d.hiddenAt === hiddenAt);
+    const back = new Map<PartId, number>();
+    for (const d of targets) back.set(d.part, (back.get(d.part) ?? 0) + 1);
+    for (const [part, n] of back) {
+      const active = doc.drawings.filter((d) => d.part === part && !d.hiddenAt).length;
+      if (active + n > LIMITS.perPartActive) {
+        throw full(`${getPart(part).label} 그림이 ${LIMITS.perPartActive}장을 넘어서 한꺼번에 되살릴 수 없어요. 하나씩 되살려 주세요`);
+      }
+    }
+    for (const d of targets) delete d.hiddenAt;
+    return targets;
   });
 }
 

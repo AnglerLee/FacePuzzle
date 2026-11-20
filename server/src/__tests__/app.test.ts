@@ -2,7 +2,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { LIMITS } from "@shared/limits";
-import type { Author, Drawing, FaceState } from "@shared/types";
+import type { Author, BulkHideResult, Drawing, FaceState } from "@shared/types";
 import app from "../app";
 import { readBodyLimited, resetGuardForTests } from "../_server/guard";
 import { addDrawing, drawingFile, getState, resetStoreForTests } from "../_server/store";
@@ -253,6 +253,41 @@ describe("지우기와 휴지통", () => {
     await send("DELETE", `/drawings/${drawing.id}`);
     const later = new Date(Date.now() + (LIMITS.trashDays + 1) * 86_400_000);
     expect((await getState(later)).drawings).toHaveLength(1);
+  });
+
+  it("초기화: 고른 부위만 한꺼번에 숨기고, 그때 시각으로 한 번에 되살린다", async () => {
+    for (let i = 0; i < 3; i++) await addDrawing(EYES(), "eyes", null);
+    const nose = await addDrawing(NOSE(), "nose", null);
+    const res = await send("POST", "/drawings/hide", { parts: ["eyes"] });
+    expect(res.status).toBe(200);
+    const { hiddenAt, drawings }: BulkHideResult = await res.json();
+    expect(drawings).toHaveLength(3);
+    expect(drawings.every((d) => d.part === "eyes" && d.hiddenAt === hiddenAt)).toBe(true);
+    const after = await state();
+    expect(after.drawings.filter((d) => !d.hiddenAt).map((d) => d.id)).toEqual([nose.id]);
+
+    const back = await send("POST", "/drawings/restore", { hiddenAt });
+    expect(back.status).toBe(200);
+    expect(await back.json()).toHaveLength(3);
+    expect((await state()).drawings.every((d) => !d.hiddenAt)).toBe(true);
+  });
+
+  it("초기화 요청이 이상하면 400, 다른 사이트에서 오면 403, 분당 5번까지", async () => {
+    expect((await send("POST", "/drawings/hide", { parts: [] })).status).toBe(400);
+    expect((await send("POST", "/drawings/hide", { parts: ["toes"] }, { ip: "4.4.4.2" })).status).toBe(400);
+    expect((await send("POST", "/drawings/restore", { hiddenAt: "어제" }, { ip: "4.4.4.3" })).status).toBe(400);
+    expect((await send("POST", "/drawings/hide", { parts: ["eyes"] }, { ip: "4.4.4.4", site: "cross-site" })).status).toBe(403);
+    for (let i = 0; i < 5; i++) expect((await send("POST", "/drawings/hide", { parts: ["eyes"] }, { ip: "4.4.4.5" })).status).toBe(200);
+    expect((await send("POST", "/drawings/hide", { parts: ["eyes"] }, { ip: "4.4.4.5" })).status).toBe(429);
+  });
+
+  it("한꺼번에 되살리다 부위가 넘치면 하나도 안 되살리고 409", async () => {
+    await addDrawing(EYES(), "eyes", null);
+    const { hiddenAt }: BulkHideResult = await (await send("POST", "/drawings/hide", { parts: ["eyes"] })).json();
+    for (let i = 0; i < LIMITS.perPartActive; i++) await addDrawing(EYES(), "eyes", null);
+    const res = await send("POST", "/drawings/restore", { hiddenAt });
+    expect(res.status).toBe(409);
+    expect((await state()).drawings.filter((d) => d.hiddenAt === hiddenAt)).toHaveLength(1);
   });
 
   it("마지막 작가는 숨길 수 없다", async () => {

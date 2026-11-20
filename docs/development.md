@@ -38,6 +38,8 @@ npm run dev     # server :8080 + web :5173 (http://localhost:5173/facepuzzle/)
 | POST | `/drawings?part=&author=` | 본문 raw `image/png` |
 | GET | `/drawings/<id>.png` | immutable 캐시 |
 | DELETE / POST | `/drawings/:id`, `/drawings/:id/restore` | 숨기기 / 되살리기 |
+| POST | `/drawings/hide` `{ parts }` | 고른 부위 그림을 한꺼번에 숨기기(설정의 초기화). `{ hiddenAt, drawings }` |
+| POST | `/drawings/restore` `{ hiddenAt }` | 그 시각에 한꺼번에 숨긴 그림을 모두 되살리기. 부위가 넘치면 409 (하나도 안 되살림) |
 | POST, PATCH, DELETE / POST | `/authors`, `/authors/:id`, `/authors/:id/restore` | |
 | POST, PATCH, DELETE / POST | `/album`, `/album/:id`, `/album/:id/restore` | |
 
@@ -51,7 +53,7 @@ npm run dev     # server :8080 + web :5173 (http://localhost:5173/facepuzzle/)
 - 토큰 버킷: IP별(`X-Real-IP` → `X-Forwarded-For`)과 전체(IP 무관). 넘으면 429 + `Retry-After`
 - 동시 업로드 3개. 넘으면 503
 - 할당량: 부위별 150장, 전체 1500장·250MB, 앨범 300, 작가 12. 넘으면 409 `full` (자동으로 지우지 않는다)
-- 지우기는 숨김이라 누가 마구 지워도 30일 안에 되살린다
+- 지우기는 숨김이라 누가 마구 지워도 30일 안에 되살린다. 한꺼번에 지우기·되살리기는 IP당 분당 5번
 
 ## 배포
 

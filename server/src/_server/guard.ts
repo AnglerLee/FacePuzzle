@@ -146,12 +146,13 @@ export const limiters = {
   albumIp: new RateLimiter("albumIp", RATE.albumIp),
   authorIp: new RateLimiter("authorIp", RATE.authorIp),
   removeIp: new RateLimiter("removeIp", RATE.removeIp),
+  bulkIp: new RateLimiter("bulkIp", RATE.bulkIp),
   writeGlobal: new RateLimiter("writeGlobal", RATE.writeGlobal),
   stateIp: new RateLimiter("stateIp", RATE.stateIp),
   imageIp: new RateLimiter("imageIp", RATE.imageIp),
 };
 
-export type LimitKind = "upload" | "album" | "author" | "remove" | "state" | "image";
+export type LimitKind = "upload" | "album" | "author" | "remove" | "bulk" | "state" | "image";
 
 const GLOBAL = "*";
 
@@ -172,6 +173,8 @@ function checksFor(kind: LimitKind, ip: string): LimitCheck[] {
       return [{ limiter: l.authorIp, key: ip }, { limiter: l.writeGlobal, key: GLOBAL }];
     case "remove":
       return [{ limiter: l.removeIp, key: ip }, { limiter: l.writeGlobal, key: GLOBAL }];
+    case "bulk":
+      return [{ limiter: l.bulkIp, key: ip }, { limiter: l.writeGlobal, key: GLOBAL }];
     case "state":
       return [{ limiter: l.stateIp, key: ip }];
     case "image":

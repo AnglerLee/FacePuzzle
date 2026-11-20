@@ -14,6 +14,8 @@ const app = new Hono().basePath("/api/facepuzzle");
 app.get("/state", (c) => handle(() => state.GET(c.req.raw)));
 
 app.post("/drawings", (c) => handle(() => drawings.POST(c.req.raw)));
+app.post("/drawings/hide", (c) => handle(() => drawings.HIDE_MANY(c.req.raw)));
+app.post("/drawings/restore", (c) => handle(() => drawings.RESTORE_MANY(c.req.raw)));
 app.get("/drawings/:file", (c) => handle(() => drawings.GET_IMAGE(c.req.raw, c.req.param("file"))));
 app.delete("/drawings/:id", (c) => handle(() => drawings.DELETE(c.req.raw, c.req.param("id"))));
 app.post("/drawings/:id/restore", (c) => handle(() => drawings.RESTORE(c.req.raw, c.req.param("id"))));

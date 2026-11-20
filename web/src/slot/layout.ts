@@ -2,7 +2,7 @@
 import { REEL_WINDOW } from "@shared/limits";
 import { activeParts, hitBoxes, PARTS, type Level, type PartDef, type PartId } from "@shared/parts";
 import type { Drawing, PartRef } from "@shared/types";
-import { candidates, resolveSrc, sampleItems, shuffle, type ReelItem } from "../face/items";
+import { candidates, resolveSrc, sampleItems, type ReelItem } from "../face/items";
 
 /** 슬롯 줄 순서: 기본 부위(눈·코·입)가 먼저 (그리기 탭과 같은 순서) */
 export const ROW_ORDER: PartId[] = ["eyes", "nose", "mouth", "face", "ears", "hair", "brows"];
@@ -52,23 +52,32 @@ export function nextBlank(level: Level, picks: Picks, playable?: ReadonlySet<Par
 
 export const isSampleRef = (ref: string) => ref.startsWith("sample-");
 
-/** 같은 seed 면 같은 순서가 나오는 난수 (썸네일 줄이 화면을 다시 그려도 뒤섞이지 않게) */
-export function seeded(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+/**
+ * seed 로 섞되, 그림마다 순번(ref 와 seed 로 정한 값)을 매겨 그 순서로 늘어놓는다.
+ * 같은 seed 면 같은 순서라 화면을 다시 그려도 그대로이고,
+ * 그림 하나를 지우거나 새로 그려도 나머지끼리의 순서는 그대로라서 썸네일 줄이 통째로 뒤섞이지 않는다.
+ */
+export function stableShuffle<T extends { ref: string }>(items: readonly T[], seed: number): T[] {
+  const rank = (ref: string) => {
+    let h = (seed ^ 0x9e3779b9) >>> 0;
+    for (let i = 0; i < ref.length; i++) h = Math.imul(h ^ ref.charCodeAt(i), 0x01000193);
+    h ^= h >>> 16;
+    h = Math.imul(h, 0x85ebca6b);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0xc2b2ae35);
+    return (h ^ (h >>> 16)) >>> 0;
   };
+  return items
+    .map((item) => ({ item, r: rank(item.ref) }))
+    .sort((a, b) => a.r - b.r || (a.item.ref < b.item.ref ? -1 : 1))
+    .map((x) => x.item);
 }
 
 export const itemsKey = (items: readonly ReelItem[]) => items.map((i) => i.ref).join(",");
 
 /**
  * 부위별 릴 항목. 썸네일 줄도 이 순서 그대로 보여 준다 — "이 중에서 하나가 나와요".
- * 돌아가는 부위: 후보를 seed 로 섞어 REEL_WINDOW 개까지. 지금 얼굴에 붙은 그림은 꼭 넣는다.
+ * 돌아가는 부위: 후보를 seed 로 섞어(stableShuffle) REEL_WINDOW 개까지. 지금 얼굴에 붙은 그림은 꼭 넣는다.
  * 안 도는 부위(기본 단계의 얼굴·귀·머리): 기본 예시 하나.
  */
 export function buildWindows(
@@ -86,7 +95,7 @@ export function buildWindows(
       return;
     }
     const all = candidates(p.id, drawings, withSamples);
-    let win = shuffle(all, seeded(seed * 31 + n * 7919)).slice(0, REEL_WINDOW);
+    let win = stableShuffle(all, seed * 31 + n * 7919).slice(0, REEL_WINDOW);
     const pick = picks[p.id];
     if (pick && !win.some((i) => i.ref === pick)) {
       const item = all.find((i) => i.ref === pick) ?? {

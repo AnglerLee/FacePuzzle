@@ -1,4 +1,5 @@
 // 앨범: 슬롯에서 담은 얼굴 모음. 크게 보기·이름 바꾸기·이미지 저장/공유·지우기, 휴지통(30일 안에 되살리기).
+// 설정의 초기화로 한꺼번에 지운 그림은 휴지통에서도 한 번에 되살린다.
 import { LIMITS } from "@shared/limits";
 import { getPart } from "@shared/parts";
 import type { AlbumEntry } from "@shared/types";
@@ -22,7 +23,7 @@ function daysLeft(hiddenAt: string): number {
 }
 
 export function AlbumScreen({ go }: { go: (s: Screen) => void }) {
-  const { state, renameAlbum, hideAlbum, restoreAlbum, restoreDrawing, restoreAuthor } = useData();
+  const { state, renameAlbum, hideAlbum, restoreAlbum, restoreDrawing, restoreBatch, restoreAuthor } = useData();
   const toast = useToast();
   const [openId, setOpenId] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState("");
@@ -89,6 +90,10 @@ export function AlbumScreen({ go }: { go: (s: Screen) => void }) {
   }
 
   const trashDrawings = (state?.drawings ?? []).filter((d) => d.hiddenAt).sort(hiddenFirst);
+  // 같은 시각에 숨긴 그림 묶음 = 초기화로 한꺼번에 지운 것
+  const byHiddenAt = new Map<string, number>();
+  for (const d of trashDrawings) byHiddenAt.set(d.hiddenAt!, (byHiddenAt.get(d.hiddenAt!) ?? 0) + 1);
+  const batches = [...byHiddenAt].filter(([, n]) => n > 1);
   const trashAlbum = (state?.album ?? []).filter((e) => e.hiddenAt).sort(hiddenFirst);
   const trashAuthors = (state?.authors ?? []).filter((a) => a.hiddenAt);
   const trashCount = trashDrawings.length + trashAlbum.length + trashAuthors.length;
@@ -163,6 +168,20 @@ export function AlbumScreen({ go }: { go: (s: Screen) => void }) {
           {trashDrawings.length > 0 && (
             <>
               <h3 className="trash-title">그림</h3>
+              {batches.map(([at, n]) => (
+                <button
+                  type="button"
+                  key={at}
+                  className="ghost-btn trash-batch"
+                  onClick={() =>
+                    restore(async () => {
+                      await restoreBatch(at);
+                    })
+                  }
+                >
+                  ♻️ {new Date(at).toLocaleDateString("ko-KR")}에 한꺼번에 지운 {n}장 모두 되살리기
+                </button>
+              ))}
               <div className="trash-grid">
                 {trashDrawings.map((d) => (
                   <div key={d.id} className="trash-item">

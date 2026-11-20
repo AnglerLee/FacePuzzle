@@ -6,6 +6,7 @@ import type {
   ApiErrorBody,
   Author,
   AuthorInput,
+  BulkHideResult,
   Drawing,
   FaceState,
 } from "@shared/types";
@@ -61,6 +62,10 @@ export const api = {
     ),
   hideDrawing: (id: string) => request<Drawing>("DELETE", `/drawings/${id}`),
   restoreDrawing: (id: string) => request<Drawing>("POST", `/drawings/${id}/restore`),
+  hideDrawingsOfParts: (parts: PartId[]) =>
+    request<BulkHideResult>("POST", "/drawings/hide", json({ parts }), "application/json"),
+  restoreDrawingsHiddenAt: (hiddenAt: string) =>
+    request<Drawing[]>("POST", "/drawings/restore", json({ hiddenAt }), "application/json"),
 
   addAuthor: (input: AuthorInput) => request<Author>("POST", "/authors", json(input), "application/json"),
   updateAuthor: (id: string, input: Partial<AuthorInput>) =>

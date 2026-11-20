@@ -1,9 +1,17 @@
 import { LIMITS } from "@shared/limits";
 import { isPartId } from "@shared/parts";
 import { readPngHeader } from "@shared/png";
-import { isId } from "@shared/types";
-import { assertRate, assertSameOrigin, HttpError, readBodyLimited, withUploadSlot } from "../_server/guard";
-import { addDrawing, expectedSize, hideDrawing, readDrawing, restoreDrawing } from "../_server/store";
+import { isId, parseBulkHideInput, parseBulkRestoreInput } from "@shared/types";
+import { assertRate, assertSameOrigin, HttpError, readBodyLimited, readJsonLimited, withUploadSlot } from "../_server/guard";
+import {
+  addDrawing,
+  expectedSize,
+  hideDrawing,
+  hideDrawingsOfParts,
+  readDrawing,
+  restoreDrawing,
+  restoreDrawingsHiddenAt,
+} from "../_server/store";
 import { json, requireId } from "./handle";
 
 /** POST /api/facepuzzle/drawings?part=eyes&author=<id>  본문: image/png */
@@ -63,4 +71,22 @@ export async function RESTORE(req: Request, id: string | undefined): Promise<Res
   const drawingId = requireId(id, "그림");
   assertRate(req, "remove");
   return json(await restoreDrawing(drawingId));
+}
+
+/** POST /api/facepuzzle/drawings/hide  본문: { parts: ["eyes", …] } — 설정의 [그린 그림 초기화] */
+export async function HIDE_MANY(req: Request): Promise<Response> {
+  assertSameOrigin(req);
+  assertRate(req, "bulk");
+  const input = parseBulkHideInput(await readJsonLimited(req));
+  if (!input) throw new HttpError(400, "bad_request", "어느 부위 그림을 지울지 알 수 없어요");
+  return json(await hideDrawingsOfParts(input.parts));
+}
+
+/** POST /api/facepuzzle/drawings/restore  본문: { hiddenAt } — 한꺼번에 지운 그림을 한 번에 되살리기 */
+export async function RESTORE_MANY(req: Request): Promise<Response> {
+  assertSameOrigin(req);
+  assertRate(req, "bulk");
+  const input = parseBulkRestoreInput(await readJsonLimited(req));
+  if (!input) throw new HttpError(400, "bad_request", "되살릴 그림을 알 수 없어요");
+  return json(await restoreDrawingsHiddenAt(input.hiddenAt));
 }

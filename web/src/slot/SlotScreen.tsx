@@ -5,17 +5,20 @@
 // - 돌아간 부위가 모두 같은 가족 작가 그림이면 잭팟.
 // - 재미: 완성되면 얼굴이 자기 이름을 말하고(읽어주기 + 입 움직임) 반응 이모지가 뜬다.
 //   평소에는 눈을 깜빡이며 두리번거리고, 기본 단계에서 안 도는 부위를 누르면 흔들린다.
-// - 부모용 설정(단계·예시 섞기·소리·읽어주기)은 ⚙️ 설정 창에 모았다.
+// - 부위 줄을 꾹 누르면(길게 누르기) 그린 그림에 ✕ 가 떠서 하나씩 지운다. 예시 그림은 못 지운다.
+// - 부모용 설정(단계·예시 섞기·소리·읽어주기·그린 그림 초기화)은 ⚙️ 설정 창에 모았다.
 import { findJackpot } from "@shared/jackpot";
+import { LIMITS } from "@shared/limits";
 import { randomName } from "@shared/names";
 import { activeParts, getPart, PARTS, PARTS_BY_STOP, PARTS_BY_Z, type Level, type PartId } from "@shared/parts";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import type { Screen } from "../app/App";
 import { useData } from "../app/data";
 import { boxStyle } from "../face/FaceView";
-import { candidates, type ReelItem } from "../face/items";
+import { activeDrawings, candidates, type ReelItem } from "../face/items";
 import { friendlyError } from "../lib/api";
 import { dragScroll } from "../lib/dragScroll";
+import { longPress } from "../lib/longPress";
 import { readPref, writePref } from "../lib/prefs";
 import { buzz, isMuted, setMuted, sfx, unlockAudio } from "../lib/sound";
 import { isSpeechOn, setSpeech, speak, stopSpeaking } from "../lib/speech";
@@ -62,7 +65,7 @@ let kept: Kept | null = null;
 type RefFn = (el: HTMLDivElement | null) => void;
 
 export function SlotScreen({ go }: { go: (s: Screen) => void }) {
-  const { state, authorById, addAlbum } = useData();
+  const { state, authorById, addAlbum, hideDrawing, restoreDrawing, hideParts, restoreBatch } = useData();
   const toast = useToast();
   const [level, setLevel] = useState<Level>(() => (readPref<string>("level", "basic") === "advanced" ? "advanced" : "basic"));
   const [restored] = useState(() => (kept && kept.level === level ? kept : null));
@@ -82,6 +85,11 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
   const [saving, setSaving] = useState(false);
   const [talking, setTalking] = useState(false);
   const [reaction, setReaction] = useState<{ emoji: string; key: number } | null>(null);
+  /** 길게 눌러 ✕ 가 뜬 부위 줄 */
+  const [editing, setEditing] = useState<PartId | null>(null);
+  /** 설정의 [그린 그림 초기화] 창과 거기서 고른 부위 */
+  const [resetPick, setResetPick] = useState<ReadonlySet<PartId> | null>(null);
+  const [resetting, setResetting] = useState(false);
 
   const reels = useRef(new Map<PartId, Reel>());
   const partEls = useRef(new Map<PartId, HTMLDivElement>());
@@ -100,6 +108,7 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
   const scrolledOnce = useRef(false);
   const stageRef = useRef<HTMLDivElement>(null);
   const [drag] = useState(dragScroll);
+  const [press] = useState(longPress);
   /** 릴·창 크기 알림이 부르는 최신 처리 함수 (렌더마다 바꿔 끼운다) */
   const handlers = useRef<{ landed: (id: PartId) => void; show: (id: PartId, index: number) => void; relayout: () => void }>({
     landed: () => {},
@@ -120,6 +129,14 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
     for (const p of active) out[p.id] = candidates(p.id, drawings, withSamples).length;
     return out;
   }, [active, drawings, withSamples]);
+  /** 부위별 그린 그림 수 (초기화 창). 지금 단계에서 안 도는 부위도 센다 */
+  const drawnCounts = useMemo(() => {
+    const out = {} as Record<PartId, number>;
+    for (const p of PARTS) out[p.id] = activeDrawings(drawings, p.id).length;
+    return out;
+  }, [drawings]);
+  const drawnTotal = PARTS.reduce((sum, p) => sum + drawnCounts[p.id], 0);
+  const resetCount = PARTS.reduce((sum, p) => sum + (resetPick?.has(p.id) ? drawnCounts[p.id] : 0), 0);
 
   // 돌릴 그림이 있는 부위 (예시 그림을 끄고 아직 안 그린 부위는 빈 줄로 남는다)
   const playable = useMemo(() => rows.filter((p) => windows[p.id].length > 0), [rows, windows]);
@@ -291,9 +308,20 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
       window.clearTimeout(autoStop.current);
       window.clearTimeout(talkTimer.current);
       window.clearTimeout(nudgeTimer.current);
+      press.end();
       stopSpeaking();
     };
-  }, []);
+  }, [press]);
+
+  // ✕ 가 뜬 줄 밖을 누르면 ✕ 를 거둔다
+  useEffect(() => {
+    if (!editing) return;
+    const onDown = (e: Event) => {
+      if (!(e.target instanceof Element) || !e.target.closest(".slot-row.is-editing")) setEditing(null);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [editing]);
 
   function runLoop() {
     if (loopOn.current) return;
@@ -312,6 +340,19 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
   function clearTimers() {
     for (const t of timers.current) window.clearTimeout(t);
     timers.current = [];
+  }
+
+  /** 얼굴에 붙은 그림 중 keep 이 아닌 것을 떼어 낸다 (그 자리는 다시 빈자리, 이름도 다시) */
+  function keepPicks(keep: (ref: string) => boolean) {
+    const cur = picksRef.current;
+    if (Object.values(cur).every((ref) => !ref || keep(ref))) return;
+    const next = Object.fromEntries(Object.entries(cur).filter(([, ref]) => ref && keep(ref))) as Picks;
+    picksRef.current = next;
+    setPicks(next);
+    setName(null);
+    setJackpotId(null);
+    setReaction(null);
+    setSaved(false);
   }
 
   /** 지금 얼굴을 지운다 (부위는 다시 빈자리) */
@@ -338,6 +379,7 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
     });
     if (targets.length === 0) return;
     for (const id of targets) starting.current.add(id);
+    setEditing(null);
     window.clearTimeout(nudgeTimer.current);
     stopSpeaking();
     setTalking(false);
@@ -409,6 +451,11 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
   }
 
   function onStagePointer(e: PointerEvent<HTMLDivElement>) {
+    // ✕ 가 떠 있을 때 얼굴을 누르면 ✕ 만 거둔다 (돌리지 않는다)
+    if (editing) {
+      setEditing(null);
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 1000;
     const y = ((e.clientY - rect.top) / rect.height) * 1000;
@@ -453,6 +500,7 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
     if (lv === level || spinningRef.current.size > 0 || loadingAll) return;
     setLevel(lv);
     writePref("level", lv);
+    setEditing(null);
     clearFace();
     setSeed((s) => s + 1);
   }
@@ -464,14 +512,78 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
     setWithSamples(next);
     writePref("samples", next);
     // 끄면 얼굴에 붙어 있던 예시 그림도 떼어 낸다 (그 자리는 다시 빈자리)
-    if (!next && Object.values(picksRef.current).some((ref) => ref && isSampleRef(ref))) {
-      const mine = Object.fromEntries(Object.entries(picksRef.current).filter(([, ref]) => ref && !isSampleRef(ref))) as Picks;
-      picksRef.current = mine;
-      setPicks(mine);
-      setName(null);
-      setJackpotId(null);
-      setReaction(null);
-      setSaved(false);
+    if (!next) keepPicks((ref) => !isSampleRef(ref));
+  }
+
+  // ── 그린 그림 지우기 ──
+  /** 부위 줄을 길게 눌렀을 때: 그린 그림에 ✕ 를 띄운다. 도는 중이면 그냥 둔다(false → 뒤따르는 누르기로 멈춘다) */
+  function startEditing(id: PartId): boolean {
+    if (spinningRef.current.size > 0 || loadingAll || starting.current.size > 0) return false;
+    if (!windows[id].some((item) => !isSampleRef(item.ref))) {
+      if (windows[id].length === 0) return false;
+      sfx.oops();
+      toast("예시 그림은 지울 수 없어요. ⚙️ 설정에서 안 나오게 할 수 있어요");
+      return true;
+    }
+    unlockAudio();
+    sfx.pop();
+    buzz(30);
+    window.clearTimeout(nudgeTimer.current);
+    setEditing(id);
+    return true;
+  }
+
+  async function removeDrawing(part: PartId, id: string) {
+    // 마지막 그림을 지우면 ✕ 를 거둔다
+    if (!activeDrawings(drawings, part).some((d) => d.id !== id)) setEditing(null);
+    try {
+      await hideDrawing(id);
+      keepPicks((ref) => ref !== id);
+      sfx.pop();
+      buzz(15);
+      toast(`${getPart(part).emoji} 그림을 지웠어요`, {
+        action: { label: "되돌리기", onClick: () => void restoreDrawing(id).catch((e) => toast(friendlyError(e), { tone: "error" })) },
+      });
+    } catch (error) {
+      sfx.oops();
+      toast(friendlyError(error), { tone: "error" });
+    }
+  }
+
+  function openReset() {
+    setSettings(false);
+    setEditing(null);
+    setResetPick(new Set(PARTS.filter((p) => drawnCounts[p.id] > 0).map((p) => p.id)));
+  }
+
+  function toggleResetPart(id: PartId) {
+    setResetPick((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  async function resetDrawings() {
+    if (!resetPick || resetting || spinningRef.current.size > 0 || loadingAll) return;
+    const parts = PARTS.filter((p) => resetPick.has(p.id) && drawnCounts[p.id] > 0).map((p) => p.id);
+    if (parts.length === 0) return;
+    setResetting(true);
+    try {
+      const { hiddenAt, drawings: gone } = await hideParts(parts);
+      const ids = new Set(gone.map((d) => d.id));
+      keepPicks((ref) => !ids.has(ref));
+      setResetPick(null);
+      sfx.pop();
+      buzz(30);
+      toast(`그린 그림 ${gone.length}장을 지웠어요`, {
+        action: { label: "되돌리기", onClick: () => void restoreBatch(hiddenAt).catch((e) => toast(friendlyError(e), { tone: "error" })) },
+      });
+    } catch (error) {
+      sfx.oops();
+      toast(friendlyError(error), { tone: "error" });
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -515,7 +627,9 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
   const jackpotAuthor = complete && jackpotId ? authorById.get(jackpotId) : undefined;
   const showName = complete && name !== null;
   const nothingPicked = rows.every((p) => !picks[p.id]);
-  const hint = loaded && playable.length === 0
+  const hint = editing
+    ? `✕ 를 누르면 ${getPart(editing).label} 그림이 지워져요`
+    : loaded && playable.length === 0
     ? "🎨 그리기에서 그림을 그려 주세요"
     : anySpin
     ? "👆 한 번 더 누르면 멈춰요"
@@ -629,29 +743,58 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
               const isPicked = !!picks[p.id];
               const more = (totals[p.id] ?? 0) - win.length;
               const empty = win.length === 0;
+              const isEdit = editing === p.id;
               return (
                 <div
                   key={p.id}
                   data-part={p.id}
-                  className={`slot-row ${isSpin ? "is-spinning" : ""} ${isPicked ? "is-picked" : ""} ${nextId === p.id ? "is-next" : ""} ${empty ? "is-empty" : ""}`}
+                  className={`slot-row ${isSpin ? "is-spinning" : ""} ${isPicked ? "is-picked" : ""} ${nextId === p.id && !editing ? "is-next" : ""} ${empty ? "is-empty" : ""} ${isEdit ? "is-editing" : ""}`}
+                  // 꾹 누르면 그린 그림에 ✕ 가 뜬다. 길게 누르고 뗄 때 따라오는 누르기는 막는다
+                  onPointerDown={(e) => {
+                    if (!isEdit) press.start(e, () => startEditing(p.id));
+                  }}
+                  onPointerMove={press.move}
+                  onPointerUp={press.end}
+                  onPointerCancel={press.end}
+                  onPointerLeave={press.end}
+                  onContextMenu={(e) => e.preventDefault()}
+                  onClickCapture={(e) => {
+                    if (!press.consumeClick()) return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                  }}
                 >
-                  <button
-                    type="button"
-                    className="row-btn"
-                    onClick={() => tapPart(p.id)}
-                    aria-label={empty ? `${p.label} 그림 없음` : isSpin ? `${p.label} 멈추기` : `${p.label} 돌리기`}
-                  >
-                    <span className="row-emoji" aria-hidden>
-                      {isSpin ? "✋" : p.emoji}
-                    </span>
-                    <span className="row-label">{isSpin ? "멈춰!" : p.label}</span>
-                    {!isSpin && (
-                      <span className="row-badge" aria-hidden>
-                        {empty ? "✏️" : isPicked ? "🔄" : "▶"}
+                  {isEdit ? (
+                    <button type="button" className="row-btn" onClick={() => setEditing(null)} aria-label={`${p.label} 지우기 끝내기`}>
+                      <span className="row-emoji" aria-hidden>
+                        ✔
                       </span>
-                    )}
-                  </button>
-                  <div className="track" ref={refFns[p.id].track} onClick={() => tapPart(p.id)} {...drag}>
+                      <span className="row-label">완료</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="row-btn"
+                      onClick={() => tapPart(p.id)}
+                      aria-label={empty ? `${p.label} 그림 없음` : isSpin ? `${p.label} 멈추기` : `${p.label} 돌리기`}
+                    >
+                      <span className="row-emoji" aria-hidden>
+                        {isSpin ? "✋" : p.emoji}
+                      </span>
+                      <span className="row-label">{isSpin ? "멈춰!" : p.label}</span>
+                      {!isSpin && (
+                        <span className="row-badge" aria-hidden>
+                          {empty ? "✏️" : isPicked ? "🔄" : "▶"}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                  <div
+                    className="track"
+                    ref={refFns[p.id].track}
+                    onClick={() => (editing ? setEditing(null) : tapPart(p.id))}
+                    {...drag}
+                  >
                     <div
                       ref={refFns[p.id].ring}
                       className={`lamp ${isSpin ? "is-chasing" : isPicked ? "is-picked" : "is-off"}`}
@@ -659,12 +802,30 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
                     >
                       <span className="lamp-in" />
                     </div>
-                    {win.map((item) => {
+                    {win.map((item, i) => {
                       const a = item.authorId ? authorById.get(item.authorId) : undefined;
+                      const sample = isSampleRef(item.ref);
                       return (
-                        <div key={item.ref} className="thumb thumb-item">
+                        <div
+                          key={item.ref}
+                          className={`thumb thumb-item ${sample ? "is-sample" : ""}`}
+                          style={isEdit ? { animationDelay: `${-(i % 3) * 0.11}s` } : undefined}
+                        >
                           <img src={item.src} alt="" loading="lazy" draggable={false} />
                           {a && <span className="thumb-author">{a.emoji}</span>}
+                          {isEdit && !sample && (
+                            <button
+                              type="button"
+                              className="thumb-x"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void removeDrawing(p.id, item.ref);
+                              }}
+                              aria-label={`${p.label} 그림 지우기`}
+                            >
+                              ✕
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -741,7 +902,66 @@ export function SlotScreen({ go }: { go: (s: Screen) => void }) {
               <span>🗣️ 읽어주기 (얼굴 이름·안내)</span>
               <b>{speech ? "켬" : "끔"}</b>
             </button>
+            <button
+              type="button"
+              className="setting-toggle is-danger"
+              onClick={openReset}
+              disabled={anySpin || loadingAll || drawnTotal === 0}
+            >
+              <span>🗑️ 그린 그림 초기화</span>
+              <b>{drawnTotal}장</b>
+            </button>
+            <p className="settings-note">하나씩 지우려면 부위 줄의 그림을 꾹 누르세요. ✕ 가 떠요.</p>
             <p className="settings-note">그린 그림은 집 NAS에 저장돼서 가족 기기 어디서나 같이 보여요.</p>
+          </div>
+        </Sheet>
+      )}
+
+      {resetPick && (
+        <Sheet title="그린 그림 초기화" onClose={() => setResetPick(null)}>
+          <div className="settings">
+            <div className="setting">
+              <span className="setting-label">어느 부위 그림을 지울까요?</span>
+              <div className="reset-parts">
+                {ROW_ORDER.map(getPart)
+                  .filter((p) => drawnCounts[p.id] > 0)
+                  .map((p) => (
+                    <button
+                      type="button"
+                      key={p.id}
+                      className={`reset-chip ${resetPick.has(p.id) ? "on" : ""}`}
+                      aria-pressed={resetPick.has(p.id)}
+                      onClick={() => toggleResetPart(p.id)}
+                    >
+                      <span aria-hidden>{resetPick.has(p.id) ? "☑️" : "⬜"}</span>
+                      {p.emoji} {p.label} <b>{drawnCounts[p.id]}</b>
+                    </button>
+                  ))}
+              </div>
+            </div>
+            <p className="settings-note">
+              지운 그림은 📒 앨범 › 🗑 휴지통에서 {LIMITS.trashDays}일 동안 되살릴 수 있어요. 앨범에 담은 얼굴은 그대로예요.
+            </p>
+            <div className="form-actions">
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => {
+                  setResetPick(null);
+                  setSettings(true);
+                }}
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                className="primary-btn danger"
+                onClick={resetDrawings}
+                disabled={resetCount === 0 || resetting || anySpin || loadingAll}
+              >
+                {resetting ? "지우는 중…" : `🗑 ${resetCount}장 지우기`}
+              </button>
+            </div>
           </div>
         </Sheet>
       )}

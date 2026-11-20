@@ -114,6 +114,16 @@ describe("슬롯 줄 (릴 항목 = 썸네일 순서)", () => {
     expect(b.eyes).toHaveLength(24);
   });
 
+  it("그림 하나를 지워도 나머지 썸네일 순서는 그대로, seed 가 바뀌면 순서도 바뀐다", () => {
+    const a = buildWindows("basic", many, true, 7, {}).eyes.map((i) => i.ref);
+    const gone = a[3];
+    const b = buildWindows("basic", many.filter((d) => d.id !== gone), true, 7, {}).eyes.map((i) => i.ref);
+    // 지운 칸만 빠지고, 줄 밖에 있던 그림 하나가 끝에 들어온다
+    expect(b.slice(0, 23)).toEqual(a.filter((ref) => ref !== gone));
+    expect(b).not.toContain(gone);
+    expect(buildWindows("basic", many, true, 8, {}).eyes.map((i) => i.ref)).not.toEqual(a);
+  });
+
   it("다음에 돌릴 부위는 줄 순서대로", () => {
     expect(nextBlank("basic", {})).toBe("eyes");
     expect(nextBlank("basic", { eyes: "sample-0" })).toBe("nose");

@@ -1,6 +1,6 @@
 // 서버 저장 형식과 API 응답 타입, 입력 검증. 화면과 서버가 같이 쓴다.
 import { LIMITS } from "./limits";
-import { isPartId, type PartId } from "./parts";
+import { isPartId, PARTS, type PartId } from "./parts";
 
 export interface Drawing {
   id: string;
@@ -145,4 +145,30 @@ export function parseAlbumInput(body: unknown): AlbumInput | null {
     parts[key] = ref;
   }
   return { name, parts };
+}
+
+/** 한꺼번에 지우기(설정의 [그린 그림 초기화]): 고른 부위의 보이는 그림을 모두 숨긴다 */
+export interface BulkHideInput {
+  parts: PartId[];
+}
+
+/** 한꺼번에 지운 그림은 모두 같은 hiddenAt 을 받는다. 그 값으로 한 번에 되살린다 */
+export interface BulkHideResult {
+  hiddenAt: string;
+  drawings: Drawing[];
+}
+
+export function parseBulkHideInput(body: unknown): BulkHideInput | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const list = (body as Record<string, unknown>).parts;
+  if (!Array.isArray(list) || list.length === 0 || list.length > PARTS.length) return null;
+  if (!list.every(isPartId)) return null;
+  return { parts: [...new Set(list)] };
+}
+
+export function parseBulkRestoreInput(body: unknown): { hiddenAt: string } | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const at = (body as Record<string, unknown>).hiddenAt;
+  if (typeof at !== "string" || at.length > 32 || Number.isNaN(Date.parse(at))) return null;
+  return { hiddenAt: at };
 }
